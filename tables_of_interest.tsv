@@ -1,1 +1,2 @@
-metabolism	met_id, drug_record_id	drug
+metabolism	met_id, drug_record_id, substrate_record_id, metabolite_record_id, enzyme_tid
+compound_records	record_id, molregno, doc_id, compound_key, compound_name, src_id
