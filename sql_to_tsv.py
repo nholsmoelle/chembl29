@@ -12,54 +12,82 @@ warnings.filterwarnings('ignore', category=UserWarning)
 pd.set_option('display.max_columns', None)
 
 
-def get_keys(table_name):
-    query_primary_key = f"SHOW keys FROM {table_name} WHERE Key_name = 'PRIMARY'"
-    query_foreign_keys = f"SHOW keys FROM {table_name} WHERE Key_name LIKE 'fk_%'"
-    query_unique_keys = f"SHOW keys FROM {table_name} WHERE Key_name LIKE 'uk_%'"
-    query_keys_of_interest = f"SHOW keys FROM {table_name} WHERE Seq_in_index = 1;"
-    pk = pd.read_sql_query(query_primary_key, cnx)['Column_name'].tolist()[0]
-    fks = pd.read_sql_query(query_foreign_keys, cnx)['Column_name'].tolist()
-    uks = pd.read_sql_query(query_unique_keys, cnx)['Column_name'].tolist()
-    koi = pd.read_sql_query(query_keys_of_interest, cnx)['Column_name'].tolist()
-    koi.remove(pk)
+def fetch_table_names(filename):
+    '''
+    Fetching table information from a predefined file
+    :param filename: name of the predefined file
+    :return:
+    '''
+    with open(filename) as tsv_file:
+        tables = []
+        read_tsv = csv.reader(tsv_file, delimiter="\t")
+        for row in read_tsv:
+            # print(row[0])
+            tables.append(row[0])
 
-    return pk, fks, uks, koi
+    return tables
 
 
-def create_tsv(query, new_filename):
-    pk, fks, uks, koi = get_keys(new_filename)
-    print(f"Table: {new_filename}\n"
-          f"PK: [{pk}]\n"
-          f"FKs: {fks}\n"
-          f"UKs: {uks}\n"
-          f"KoI: {koi}\n")
-    results = pd.read_sql_query(query, cnx)
-    results.to_csv(f"output_files/data_tables/{new_filename}.tsv", index=False, sep='\t')
-    # for fk in fks:
-    #     edge_table_name = f"{pk}-X-{fk}"
-    #     results[[str(pk), str(fk)]].to_csv(f"output_files/edge_tables/{edge_table_name}.tsv", index=False, sep='\t')
-    # for uk in uks:
-    #     edge_table_name = f"{pk}-X-{uk}"
-    #     results[[str(pk), str(uk)]].to_csv(f"output_files/edge_tables/{edge_table_name}.tsv", index=False, sep='\t')
-    for k in koi:
-        edge_table_name = f"{pk}-X-{k}"
-        results[[str(pk), str(k)]].to_csv(f"output_files/edge_tables/{edge_table_name}.tsv", index=False, sep='\t')
+def get_primary_keys(tables):
+    pks = {}
+    for table in tables:
+        query_primary_key = f"SHOW keys FROM {table} WHERE Key_name = 'PRIMARY'"
+        primary_key = pd.read_sql_query(query_primary_key, cnx)['Column_name'].tolist()[0]
+        pks[table] = primary_key
+
+    return pks
+
+
+def fetch_references(table_name=None):
+    if not table_name:
+        cursor.execute(f"SELECT TABLE_NAME, COLUMN_NAME, CONSTRAINT_NAME, REFERENCED_TABLE_NAME,REFERENCED_COLUMN_NAME "
+                       f"FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE "
+                       f"WHERE REFERENCED_TABLE_SCHEMA IS NOT NULL;")
+        data = cursor.fetchall()
+    else:
+        cursor.execute(f"SELECT TABLE_NAME, COLUMN_NAME, CONSTRAINT_NAME, REFERENCED_TABLE_NAME,REFERENCED_COLUMN_NAME "
+                       f"FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE "
+                       f"WHERE REFERENCED_TABLE_SCHEMA IS NOT NULL AND TABLE_NAME = '{table_name}';")
+        data = cursor.fetchall()
+
+    return data
+
+
+def create_tsv(new_file, query=None, data=None):
+    if not data:
+        results = pd.read_sql_query(query, cnx)
+        results.to_csv(new_file, index=False, sep='\t')
+        return results
+    if not query:
+        data.to_csv(new_file, index=False, sep='\t')
+    write_cypher_query()
 
 
 def sql_to_tsv(filename, limit=None):
-    with open(filename) as tsv_file:
-        read_tsv = csv.reader(tsv_file, delimiter="\t")
-        for row in read_tsv:
-            tables = row[0].split(", ")
-            table_name = tables[0]
-            query = f'SELECT * FROM chembl29.{table_name}'
-            # if len(row) > 1:
-            #     column_names = row[1]
-            #     query = f'SELECT {column_names} FROM chembl29.{table_name}'
-            if limit:
-                query += f" LIMIT {limit}"
-            query += ";"
-            create_tsv(query, table_name)
+    TABLE_NAME = 0
+    COLUMN_NAME = 1
+    CONSTRAINT_NAME = 2
+    REFERENCED_TABLE_NAME = 3
+    REFERENCED_COLUMN_NAME = 4
+    tables = fetch_table_names(filename)
+    for table in tables:
+        query = f"SELECT * FROM chembl29.{table}"
+        if limit:
+            query += f" LIMIT {limit}"
+        query += ";"
+        new_file = f"output_files/data_tables/{table}.tsv"
+        data = create_tsv(new_file, query)
+
+        refs = fetch_references(table_name=table)
+        for ref in refs:
+            column = ref[COLUMN_NAME]
+            constraint = ref[CONSTRAINT_NAME]
+            ref_table = ref[REFERENCED_TABLE_NAME]
+            ref_column = ref[REFERENCED_COLUMN_NAME]
+            new_filename = f"{table}-{column}---edge---{ref_table}-{ref_column}"
+            new_file = f"output_files/edge_tables/{new_filename}.tsv"
+            pk = get_primary_keys([table])[table]
+            data[[str(pk), str(column)]].to_csv(new_file, index=False, sep='\t')
 
 
 
@@ -78,10 +106,10 @@ cnx = con.connect(username=user,
                               host=host,
                               database=database)
 cursor = cnx.cursor()
-# with open(filename) as tsv_file:
-#     read_tsv = csv.reader(tsv_file, delimiter="\t")
-#     for i, row in enumerate(read_tsv):
-#         print(i, row)
 
-sql_to_tsv(filename)
-# sql_to_tsv(filename, limit=10)
+
+
+
+sql_to_tsv(filename, limit=10)
+
+
