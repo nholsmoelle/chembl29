@@ -53,14 +53,34 @@ def fetch_references(table_name=None):
     return data
 
 
-def create_tsv(new_file, query=None, data=None):
-    if not data:
-        results = pd.read_sql_query(query, cnx)
+def write_cypher_query(querytype, file_loc, parameters: list[str]):
+    if querytype == "node" and len(parameters) > 1:
+        node_name = parameters.pop(0)
+        query = f"LOAD CSV WITH HEADERS from 'file:///home/nina/PycharmProjects/chembl29/{file_loc}' AS line " \
+                f"FIELDTERMINATOR '\\t' " \
+                f"CREATE (:{node_name} {{"  # pathway_id:line.pathway_id, drug_record_id:line.drug_record_id}})
+        while len(parameters) > 1:
+            param = parameters.pop()
+            query += f"{param}:line.{param}, "
+        param = parameters.pop()
+        query += f"{param}:line.{param}}});\n"
+        with open("queries.cyp", "a") as cypher_file:
+            cypher_file.write(query)
+
+    if querytype == "edge":
+        pass
+
+
+def create_tsv(query, table_name=None, new_file=None):
+    if query:
+        new_file = f"output_files/data_tables/{table_name}.tsv"  # Define file name/location
+        results = pd.read_sql_query(query, cnx)  # Query the data into a dataframe
+        parameters = [table_name] + results.columns.tolist()  # Extract column names as cypher query parameters
+        write_cypher_query(querytype="node",
+                           file_loc=new_file,
+                           parameters=parameters)
         results.to_csv(new_file, index=False, sep='\t')
         return results
-    if not query:
-        data.to_csv(new_file, index=False, sep='\t')
-    write_cypher_query()
 
 
 def sql_to_tsv(filename, limit=None):
@@ -75,11 +95,13 @@ def sql_to_tsv(filename, limit=None):
         if limit:
             query += f" LIMIT {limit}"
         query += ";"
-        new_file = f"output_files/data_tables/{table}.tsv"
-        data = create_tsv(new_file, query)
+        # new_file = f"output_files/data_tables/{table}.tsv"
+        # data = create_tsv(new_file, query=query)
+        data = create_tsv(table_name=table, query=query)
+        continue
 
         refs = fetch_references(table_name=table)
-        for ref in refs:
+        for ref in refs:  #TODO: Edge-Queries schreiben lassen
             column = ref[COLUMN_NAME]
             constraint = ref[CONSTRAINT_NAME]
             ref_table = ref[REFERENCED_TABLE_NAME]
@@ -88,6 +110,8 @@ def sql_to_tsv(filename, limit=None):
             new_file = f"output_files/edge_tables/{new_filename}.tsv"
             pk = get_primary_keys([table])[table]
             data[[str(pk), str(column)]].to_csv(new_file, index=False, sep='\t')
+            write_cypher_query(querytype="edge",
+                               file_loc=new_file)
 
 
 
@@ -107,9 +131,11 @@ cnx = con.connect(username=user,
                               database=database)
 cursor = cnx.cursor()
 
+# Cleaning up the cypher query file
+with open("queries.cyp", "w") as file:
+    file.write("")
 
 
-
-sql_to_tsv(filename, limit=10)
+sql_to_tsv(filename, limit=100)
 
 
