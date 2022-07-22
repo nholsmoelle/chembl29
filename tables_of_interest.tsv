@@ -1,2 +1,11 @@
-metabolism	met_id, drug_record_id, substrate_record_id, metabolite_record_id, enzyme_tid
-compound_records	record_id, molregno, doc_id, compound_key, compound_name, src_id
+activities
+assays
+chembl_id_lookup
+target_dictionary
+source
+drug_mechanism
+target_components
+component_sequences
+mechanism_refs
+indication_refs
+
