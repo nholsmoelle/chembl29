@@ -4,44 +4,49 @@ These files are then subsequently to be loaded into a Neo4j graph database.
 '''
 
 import csv
+import os
+
 import mysql.connector as con
+import numpy
 import pandas as pd
 import warnings
 import sys
-
+from os.path import exists
 from typing import List
 
+### Optional:
 warnings.filterwarnings('ignore', category=UserWarning)
 pd.set_option('display.max_columns', None)
 
 
-def fetch_table_names(filename):
-    '''
-    Fetching table information from a predefined file
-    :param filename: name of the predefined file
-    :return:
-    '''
+def check_size(table_name):
+    query = f"SELECT COUNT(*) from {table_name}"
+    cnt = pd.read_sql_query(query, cnx)
+    n_rows = int(cnt[cnt.columns[0]][0])
+    cursor.reset(free=True)
+    return n_rows
+
+
+def fetch_tables(filename):
     with open(filename) as tsv_file:
-        tables = []
+        tables = {}
         read_tsv = csv.reader(tsv_file, delimiter="\t")
         for row in read_tsv:
             try:
-                tables.append(row[0])
-                # print(row[0])
+                additional_command = ""
+                if len(row) > 1:
+                    additional_command = row[1]
+                tables[row[0]] = additional_command
             except:
-                pass
-
+                print(f"ERROR: Could not fetch tables from {filename}")
     return tables
 
 
-def get_primary_keys(tables):
-    pks = {}
-    for table in tables:
-        query_primary_key = f"SHOW keys FROM {table} WHERE Key_name = 'PRIMARY'"
-        primary_key = pd.read_sql_query(query_primary_key, cnx)['Column_name'].tolist()[0]
-        pks[table] = primary_key
-
-    return pks
+def get_primary_key(table):
+    query_primary_key = f"SHOW keys FROM {table} WHERE Key_name = 'PRIMARY'"
+    primary_key = pd.read_sql_query(query_primary_key, cnx)['Column_name'].tolist()[0]
+    cursor.reset(free=True)
+    return primary_key
 
 
 def fetch_references(table_name=None):
@@ -62,8 +67,9 @@ def fetch_references(table_name=None):
 def write_cypher_query(querytype, file_loc, parameters: List[str]):
     if querytype == "node" and len(parameters) > 1:
         node_label = parameters.pop(0)
-        query = f":auto USING PERIODIC COMMIT " \
-                f"LOAD CSV WITH HEADERS from 'file:///home/nina/PycharmProjects/chembl29/{file_loc}' AS line " \
+        # query = f":auto USING PERIODIC COMMIT 1000 " \
+        # query = f":auto USING PERIODIC COMMIT " \
+        query = f"LOAD CSV WITH HEADERS from 'file://{path_to_project}/{file_loc}' AS line " \
                 f"FIELDTERMINATOR '\\t' " \
                 f"CREATE (:{node_label} {{"
         while len(parameters) > 1:
@@ -86,87 +92,118 @@ def write_cypher_query(querytype, file_loc, parameters: List[str]):
             cypher_file.write(query)
 
 
-def create_tsv(query, table_name):
-    if query:
-        new_file = f"output_files/data_tables/{table_name}.tsv"  # Define file name/location
-        results = pd.read_sql_query(query, cnx)  # Query the data into a dataframe
-        # results = pd.read_sql_query(query, cnx, chunksize=10000)  # Query the data into a dataframe
-        # for chunk in results:
-        for col, dt in results.dtypes.items():
+def highlighted(text, random=False, background_color='\033[47m', text_color='\033[30m'):
+    if random:
+        background_color = f'\033[{numpy.random.randint(40, 48)}m'
+    return background_color + text + text_color
+
+
+def replace_double_quotes(df: pd.DataFrame, column):
+    for idx in df.index:
+        if df[column][idx] \
+                and (str(df[column][idx]) not in ["None", "nan"]) \
+                and ("\"" in df[column][idx]):
+            df[column][idx] = df[column][idx].replace("\"", "\'\'")
+            # df.iloc[column, idx] = df[column][idx].replace("\"", "\'\'")
+    return df
+
+
+def create_tsv(table_name, query, chunk_size=None):
+    cyp_node_parameters = None
+    cyp_edge_parameters = None
+    data_file = f"output_files/data_tables/{table_name}.tsv"  # Define data file name/location
+    edge_file = None
+    column, constraint, ref_table, ref_column = None, None, None, None
+    pk = get_primary_key(table_name)
+    refs = fetch_references(table_name=table_name)
+    if "LIMIT" in query:
+        table_size = int(query.split("LIMIT")[-1].strip(";").strip())
+    else:
+        table_size = check_size(table_name)
+    # n_chunks = int(table_size / chunk_size) + 1
+    n_chunks = int(numpy.ceil(table_size / chunk_size))
+    if exists(data_file):
+        os.remove(data_file)
+    result = pd.read_sql_query(query, cnx, chunksize=chunk_size)  # Query the data into a dataframe
+    i = 0
+    for chunk in result:
+        i += 1
+        sys.stdout.write("\r" + "\t"*5 + f" Chunk {i}/{n_chunks}")
+        for col, dt in chunk.dtypes.items():  # Replacing double quotes in every object-type column
             if str(dt) == "object":
-                for idx in results.index:
-                    if results[col][idx] \
-                            and (str(results[col][idx]) not in ["None", "nan"]) \
-                            and ("\"" in results[col][idx]):
-                        results[col][idx] = results[col][idx].replace("\"", "\'\'")
-                        print("\t"*5, results[col][idx])
-        results.to_csv(new_file,
-                       index=False,
-                       sep='\t',
-                       chunksize=100000)  # Write data into a TSV file
-        parameters = [table_name] + results.columns.tolist()  # Extract column names as cypher query parameters
-        write_cypher_query(querytype="node",
-                           file_loc=new_file,
-                           parameters=parameters)  # Use data for preparing cypher query to create nodes
-        return results
+                chunk = replace_double_quotes(chunk, col)
+        if not exists(data_file):  # Write first data chunk into a TSV file
+            cyp_node_parameters = [table_name] + chunk.columns.tolist()
+            chunk.to_csv(data_file, index=False, sep='\t', chunksize=100000, mode='w')
+            # print("\t" * 5, f"Created {data_file}")
+            write_cypher_query(querytype="node", file_loc=data_file, parameters=cyp_node_parameters)
+            for ref in refs:
+                column = ref[1]  # Foreign key (constraint) column name
+                constraint = ref[2]  # Foreign key (constraint) name
+                ref_table = ref[3]  # Name of foreign key's referenced (target) table
+                ref_column = ref[4]  # Name of referenced/key column in the target table
+                edge_file_name = f"{table_name}-{column}---edge---{ref_table}-{ref_column}"
+                edge_file = f"output_files/edge_tables/{edge_file_name}.tsv"
+                if exists(edge_file):
+                    os.remove(edge_file)
+                cyp_edge_parameters = [table_name, ref_table, column, ref_column]
+                chunk[[pk, column]].to_csv(edge_file, index=False, sep='\t', chunksize=100000, mode='w')
+                # print("\t" * 5, f"Created {edge_file}")
+                write_cypher_query(querytype="edge", file_loc=edge_file, parameters=cyp_edge_parameters)
+        else:  # Append data chunk to the TSV file
+            chunk.to_csv(data_file, index=False, sep='\t', chunksize=100000, mode='a', header=False)
+            # print("\t" * 5, f"Added data to {data_file}")
+            for ref in refs:
+                chunk[[pk, column]].to_csv(edge_file, index=False, sep='\t', chunksize=100000, mode='a')
+                # print("\t" * 5, f"Added data to {edge_file}")
+    cursor.reset(free=True)
 
 
 def sql_to_tsv(filename, limit=None):
-    COLUMN_NAME = 1
-    CONSTRAINT_NAME = 2
-    REFERENCED_TABLE_NAME = 3
-    REFERENCED_COLUMN_NAME = 4
-    tables = fetch_table_names(filename)
-    for i, table in enumerate(tables):
-        query = f"SELECT * FROM chembl29.{table}"
-        if limit:
-            query += f" LIMIT {limit}"
-        query += ";"
-        data = create_tsv(table_name=table, query=query)
-        refs = fetch_references(table_name=table)
-        for j, ref in enumerate(refs):
-            column = ref[COLUMN_NAME]
-            constraint = ref[CONSTRAINT_NAME]
-            ref_table = ref[REFERENCED_TABLE_NAME]
-            ref_column = ref[REFERENCED_COLUMN_NAME]
-            new_filename = f"{table}-{column}---edge---{ref_table}-{ref_column}"
-            new_file = f"output_files/edge_tables/{new_filename}.tsv"
-            pk = get_primary_keys([table])[table]
-            data[[str(pk), str(column)]].to_csv(new_file,
-                                                index=False,
-                                                sep='\t',
-                                                chunksize=100000)
-            parameters = [table, ref_table, column, ref_column]
-            write_cypher_query(querytype="edge",
-                               file_loc=new_file,
-                               parameters=parameters)
-            print(f"{column} -> {ref_table} ({j+1}/{len(refs)}) edge table created for node table {table} ({i+1}/{len(tables)})")
+    tables = fetch_tables(filename)
+    chunk_size = 100000
+    for table in tables.items():
+        msg = f"\nTable: {table[0]}\n"
+        sys.stdout.write(msg)
+        generate(table_data=table, chunk_size=chunk_size, limit=limit)
 
 
+def generate(table_data, chunk_size=None, limit=None):
+    table = table_data[0]
+    query = f"SELECT * FROM chembl29.{table}"
+    query += " " + table_data[1]
+    query = query.strip()
+    if limit:
+        query += f" LIMIT {limit}"
+    query += ";"
+    create_tsv(table_name=table,
+               query=query,
+               chunk_size=chunk_size)
 
-user = "pycharm"  #TODO user input
-password = "PyCharm_P455w0r7"  #TODO user input
-# user = input("user name: ")
-# password = input("user password: ")
+
+path_to_project = '/home/nina/PycharmProjects/chembl29' #input("Absolute path to project: ")
+user = "pycharm"  #input("User name: ")
+password = "PyCharm_P455w0r7"  #input("User password: ")
 # server = "Local instance 3306"  # specify to run this script
 # port = 3306  # specify to run this script
 host = "localhost"
 database = "chembl29"  # specify to run this script
 filename = "tables_of_interest.tsv"  # specify to run this script
-# tsv_file = open(filename)
 cnx = con.connect(username=user,
                               password=password,
                               host=host,
                               database=database)
-cursor = cnx.cursor()
+cursor = cnx.cursor(buffered=True)
 
-### Cleaning up the cypher query file
-with open("create_queries.cyp", "w") as file:
-    file.write("")
-with open("match_queries.cyp", "w") as file:
-    file.write("")
+### Cleaning up the cypher query files
+if exists("create_queries.cyp"):
+    with open("create_queries.cyp", "w") as file:
+        file.write("")
+if exists("match_queries.cyp"):
+    with open("match_queries.cyp", "w") as file:
+        file.write("")
 
 
 sql_to_tsv(filename, limit=None)
-
+cnx.close()
 

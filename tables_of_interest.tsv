@@ -1,11 +1,58 @@
 activities
-assays
+activity_properties
+assay_type
+assays	WHERE assay_organism = 'Homo sapiens'
+atc_classification
+binding_sites
+bio_component_sequences	WHERE organism = 'Homo sapiens'
+biotherapeutic_components
+biotherapeutics
+cell_dictionary	WHERE cell_source_organism = 'Homo sapiens'
 chembl_id_lookup
-target_dictionary
-source
+component_class
+component_domains
+component_go
+component_sequences	WHERE organism = 'Homo sapiens'
+component_synonyms
+compound_properties
+compound_records
+compound_structures
+confidence_score_lookup
+defined_daily_dose
+docs
+domains
+drug_indication
 drug_mechanism
-target_components
-component_sequences
-mechanism_refs
+drug_warning
+go_classification
 indication_refs
-
+mechanism_refs
+metabolism	WHERE organism = 'Homo sapiens'
+metabolism_refs
+molecule_atc_classification
+molecule_dictionary
+molecule_hierarchy
+molecule_synonyms
+protein_class_synonyms
+protein_classification
+relationship_type
+site_components
+target_components
+target_dictionary
+target_relations
+tissue_dictionary
+variant_sequences	WHERE organism = 'Homo sapiens'
+assay_class_map
+assay_classification
+assay_parameters
+bioassay_ontology
+compound_structural_alerts
+frac_classification
+hrac_classification
+irac_classification
+molecule_frac_classification
+molecule_hrac_classification
+molecule_irac_classification
+source
+structural_alert_sets
+structural_alerts
