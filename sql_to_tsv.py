@@ -67,9 +67,11 @@ def fetch_references(table_name=None):
 def write_cypher_query(querytype, file_loc, parameters: List[str]):
     if querytype == "node" and len(parameters) > 1:
         node_label = parameters.pop(0)
-        # query = f":auto USING PERIODIC COMMIT 1000 " \
+        # query = f"LOAD CSV WITH HEADERS from 'file://{path_to_project}/{file_loc}' AS line " \
+        # query = f":auto USING PERIODIC COMMIT 10000 " \
         # query = f":auto USING PERIODIC COMMIT " \
-        query = f"LOAD CSV WITH HEADERS from 'file://{path_to_project}/{file_loc}' AS line " \
+        query = f"USING PERIODIC COMMIT 10000 " \
+                f"LOAD CSV WITH HEADERS from 'file://{path_to_project}/{file_loc}' AS line " \
                 f"FIELDTERMINATOR '\\t' " \
                 f"CREATE (:{node_label} {{"
         while len(parameters) > 1:
@@ -87,7 +89,7 @@ def write_cypher_query(querytype, file_loc, parameters: List[str]):
         b_key_column = parameters.pop(0)
         query = f"MATCH (a:{table_a}), (b:{table_b}) " \
                 f"WHERE a.{a_key_column} = b.{b_key_column} " \
-                f"CREATE (a)-[:OF]->(b);\n"
+                f"CREATE (a)-[:{a_key_column}]->(b);\n"
         with open("match_queries.cyp", "a") as cypher_file:
             cypher_file.write(query)
 
@@ -128,7 +130,7 @@ def create_tsv(table_name, query, chunk_size=None):
     i = 0
     for chunk in result:
         i += 1
-        sys.stdout.write("\r" + "\t"*5 + f" Chunk {i}/{n_chunks}")
+        sys.stdout.write("\r" + f"Table: {table_name} (chunk {i}/{n_chunks})")
         for col, dt in chunk.dtypes.items():  # Replacing double quotes in every object-type column
             if str(dt) == "object":
                 chunk = replace_double_quotes(chunk, col)
@@ -163,8 +165,6 @@ def sql_to_tsv(filename, limit=None):
     tables = fetch_tables(filename)
     chunk_size = 100000
     for table in tables.items():
-        msg = f"\nTable: {table[0]}\n"
-        sys.stdout.write(msg)
         generate(table_data=table, chunk_size=chunk_size, limit=limit)
 
 
