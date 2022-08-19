@@ -65,6 +65,13 @@ def fetch_references(table_name=None):
 
 
 def write_cypher_query(querytype, file_loc, parameters: List[str]):
+    """
+    Writes Cypher queries to designated files
+    :param querytype: edge or node
+    :param file_loc: path from where the node data is loaded
+    :param parameters: [table_name, ref_table, column, ref_column] for edge queries
+    :return:
+    """
     if querytype == "node" and len(parameters) > 1:
         node_label = parameters.pop(0)
         # query = f"LOAD CSV WITH HEADERS from 'file://{path_to_project}/{file_loc}' AS line " \
@@ -87,11 +94,16 @@ def write_cypher_query(querytype, file_loc, parameters: List[str]):
         table_b = parameters.pop(0)
         a_key_column = parameters.pop(0)
         b_key_column = parameters.pop(0)
-        query = f"MATCH (a:{table_a}), (b:{table_b}) " \
-                f"WHERE a.{a_key_column} = b.{b_key_column} " \
-                f"CREATE (a)-[:{a_key_column}]->(b);\n"
-        with open("match_queries.cyp", "a") as cypher_file:
-            cypher_file.write(query)
+        # query = f"MATCH (a:{table_a}), (b:{table_b}) " \
+        #         f"WHERE a.{a_key_column} = b.{b_key_column} " \
+        #         f"CREATE (a)-[:{a_key_column}]->(b);\n"
+        # with open("match_queries.cyp", "a") as cypher_file:
+        #     cypher_file.write(query)
+        query = f"MATCH (a:{table_a} {{{a_key_column}:\"value_a\"}}) " \
+                f"MATCH (b:{table_b} {{{b_key_column}:\"value_b\"}}) " \
+                f"CREATE (a)-[:{a_key_column}]->(b);"
+        with open("match_queries.tsv", "a") as match_tsv:
+            match_tsv.write(file_loc + " \t" + query + " \n")
 
 
 def highlighted(text, random=False, background_color='\033[47m', text_color='\033[30m'):
@@ -149,7 +161,7 @@ def create_tsv(table_name, query, chunk_size=None):
                 if exists(edge_file):
                     os.remove(edge_file)
                 cyp_edge_parameters = [table_name, ref_table, column, ref_column]
-                chunk[[pk, column]].to_csv(edge_file, index=False, sep='\t', chunksize=100000, mode='w')
+                # chunk[[pk, column]].to_csv(edge_file, index=False, sep='\t', chunksize=100000, mode='w')
                 # print("\t" * 5, f"Created {edge_file}")
                 write_cypher_query(querytype="edge", file_loc=edge_file, parameters=cyp_edge_parameters)
         else:  # Append data chunk to the TSV file
@@ -200,10 +212,12 @@ if exists("create_queries.cyp"):
     with open("create_queries.cyp", "w") as file:
         file.write("")
 if exists("match_queries.cyp"):
-    with open("match_queries.cyp", "w") as file:
+    with open("match_queries.tsv", "w") as file:
         file.write("")
 
 
 sql_to_tsv(filename, limit=None)
+
+
 cnx.close()
 
